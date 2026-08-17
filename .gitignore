@@ -1,0 +1,12 @@
+# Environments
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pkl
+
+# Data
+data/raw/*.csv
+data/processed/*.csv
