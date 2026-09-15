@@ -33,6 +33,7 @@ src/
   experiment.py        # Benchmarking, calibration, and cutoff analysis
   api.py               # FastAPI application
   dashboard.py         # Streamlit application
+  scoring.py           # PD-to-credit-score conversion
 tests/                 # Automated tests
 ```
 
@@ -50,7 +51,7 @@ Activate the environment, then install dependencies:
 pip install -r requirements.txt
 ```
 
-Place the Lending Club CSV at `data/raw/loan.csv`. The source data and generated artifacts are intentionally excluded from Git because of size and licensing considerations.
+Download the [Lending Club Loan Data CSV](https://www.kaggle.com/datasets/adarshsng/lending-club-loan-data-csv/data) from Kaggle. Place the CSV at `data/raw/loan.csv`. Source data and generated artifacts are excluded from Git because of size and licensing considerations.
 
 ## Reproduce The Pipeline
 
@@ -72,6 +73,8 @@ Generate the model artifacts first, then start either application:
 uvicorn src.api:app --reload
 streamlit run src/dashboard.py
 ```
+
+Open Streamlit at [http://localhost:8501](http://localhost:8501). Open FastAPI docs at [http://localhost:8000/docs](http://localhost:8000/docs).
 
 The API exposes `GET /health` and `POST /predict`. Send only fields in the trained feature schema; `loan_amnt` is required and must be positive. Conditional pricing fields such as `int_rate` and `installment` are rejected.
 

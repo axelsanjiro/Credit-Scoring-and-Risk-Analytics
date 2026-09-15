@@ -71,7 +71,6 @@ Implemented in `src/data_pipeline.py`:
 
 - Reads only whitelisted columns to reduce memory use and avoid known leakage fields.
 - Converts `int_rate` from percentage text into float.
-- Extracts numeric employment duration from `emp_length` into `emp_length_years`.
 - Parses `term` into `term_months` and `emp_length` into `emp_length_years`.
 - Parses `issue_d` into `issue_date` and derives `credit_history_months` from `earliest_cr_line`.
 - Renames `purpose` to `loan_purpose`.
@@ -145,7 +144,7 @@ The immediate priority is to add valid pre-origination signals, correct the vali
 
 ## Evaluation Framework
 
-The final model will be assessed across three dimensions:
+The final model is assessed across three dimensions:
 
 - Discrimination: ROC-AUC, Gini coefficient, KS statistic, and PR-AUC.
 - Calibration: Brier score, calibration curve, and observed default rate by PD decile.
