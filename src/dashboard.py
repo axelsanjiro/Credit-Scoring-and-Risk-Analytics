@@ -2,10 +2,17 @@
 
 import json
 import os
+import sys
+from pathlib import Path
 
 import joblib
 import pandas as pd
 import streamlit as st
+
+# Streamlit executes this file directly, so add the project root for `src` imports.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.api import CATEGORICAL_FEATURES, NUMERIC_FEATURES, to_model_frame
 from src.scoring import prob_to_credit_score
@@ -15,8 +22,8 @@ st.set_page_config(page_title="Credit Risk Simulator", layout="wide")
 st.title("Credit Risk Simulator")
 st.caption("Historical Lending Club benchmark. Not production lending policy.")
 
-model = joblib.load("models/credit_risk_model.pkl")
-report_path = "models/final_model_report.json"
+model = joblib.load(PROJECT_ROOT / "models" / "credit_risk_model.pkl")
+report_path = PROJECT_ROOT / "models" / "final_model_report.json"
 report = json.load(open(report_path, encoding="ascii")) if os.path.exists(report_path) else {}
 cutoff = report.get("recommended_cutoff", {}).get("pd_cutoff", 0.23)
 
@@ -38,10 +45,12 @@ if submitted:
     st.metric("Expected loss", f"${probability_default * 0.45 * values['loan_amnt']:,.2f}")
     st.write("Decision:", "Approve" if probability_default < cutoff else "Decline")
 
-if os.path.exists("models/shap_summary.csv"):
+shap_path = PROJECT_ROOT / "models" / "shap_summary.csv"
+if os.path.exists(shap_path):
     st.subheader("Top global SHAP drivers")
-    st.bar_chart(pd.read_csv("models/shap_summary.csv").head(10), x="feature", y="mean_absolute_shap")
+    st.bar_chart(pd.read_csv(shap_path).head(10), x="feature", y="mean_absolute_shap")
 
-if os.path.exists("models/cutoff_analysis.csv"):
+cutoff_path = PROJECT_ROOT / "models" / "cutoff_analysis.csv"
+if os.path.exists(cutoff_path):
     st.subheader("Cutoff trade-off")
-    st.line_chart(pd.read_csv("models/cutoff_analysis.csv"), x="pd_cutoff", y="expected_profit")
+    st.line_chart(pd.read_csv(cutoff_path), x="pd_cutoff", y="expected_profit")

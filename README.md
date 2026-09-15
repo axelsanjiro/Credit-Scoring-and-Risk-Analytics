@@ -14,6 +14,20 @@ This repository is a portfolio project, not a production lending policy. Do not 
 - FastAPI inference endpoint and Streamlit scoring simulator.
 - Unit tests for temporal splitting, financial ratios, score scaling, and API validation.
 
+## Evaluation Results
+
+Latest experiment selects XGBoost with isotonic calibration. Final metrics use untouched out-of-time test data from September 2016 through December 2018.
+
+| Metric | Validation | Final Test |
+|---|---:|---:|
+| ROC-AUC | 0.7249 | 0.6968 |
+| Gini | 0.4499 | 0.3936 |
+| KS | 0.3240 | 0.2853 |
+| PR-AUC | 0.4224 | 0.3730 |
+| Brier score | 0.1519 | 0.1575 |
+
+Recommended PD cutoff: `0.23`. Expected approval rate: `64.61%`. Approved-loan default rate: `14.69%`. Results depend on historical data and documented business assumptions.
+
 ## Repository Layout
 
 ```text
@@ -77,6 +91,30 @@ streamlit run src/dashboard.py
 Open Streamlit at [http://localhost:8501](http://localhost:8501). Open FastAPI docs at [http://localhost:8000/docs](http://localhost:8000/docs).
 
 The API exposes `GET /health` and `POST /predict`. Send only fields in the trained feature schema; `loan_amnt` is required and must be positive. Conditional pricing fields such as `int_rate` and `installment` are rejected.
+
+### API Prediction Example
+
+Start the API, then send a JSON payload. The minimal valid request contains a positive `loan_amnt`; omitted model features are handled by the training-time preprocessing pipeline.
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/predict `
+  -ContentType "application/json" `
+  -Body '{"features":{"loan_amnt":10000}}'
+```
+
+The response contains `probability_default`, a FICO-like `credit_score`, the selected `pd_cutoff`, an `approved` decision, and `expected_loss`.
+
+```json
+{
+  "probability_default": 0.18,
+  "credit_score": 658,
+  "pd_cutoff": 0.23,
+  "approved": true,
+  "expected_loss": 810.0
+}
+```
+
+Values above are illustrative; predictions vary with the request and generated model artifact. Use [http://localhost:8000/docs](http://localhost:8000/docs) to inspect and try the interactive OpenAPI schema.
 
 ## Docker
 

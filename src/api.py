@@ -1,22 +1,23 @@
 """FastAPI inference endpoint for approved pre-origination loan fields."""
 
-import os
 import json
+from pathlib import Path
 from typing import Union
 
 import joblib
 import pandas as pd
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from src.scoring import prob_to_credit_score
 
 
-ARTIFACT_PATH = "models/credit_risk_model.pkl"
-REPORT_PATH = "models/final_model_report.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ARTIFACT_PATH = PROJECT_ROOT / "models" / "credit_risk_model.pkl"
+REPORT_PATH = PROJECT_ROOT / "models" / "final_model_report.json"
 Value = Union[float, int, str, None]
 
-if not os.path.exists(ARTIFACT_PATH):
+if not ARTIFACT_PATH.exists():
     raise RuntimeError(f"Model artifact not found: {ARTIFACT_PATH}. Run src.experiment first.")
 
 MODEL = joblib.load(ARTIFACT_PATH)
@@ -29,7 +30,9 @@ with open(REPORT_PATH, encoding="ascii") as file:
 
 
 class PredictionRequest(BaseModel):
-    features: dict[str, Value]
+    features: dict[str, Value] = Field(
+        json_schema_extra={"example": {"loan_amnt": 10000}}
+    )
 
     @model_validator(mode="after")
     def check_features(self):
@@ -40,6 +43,26 @@ class PredictionRequest(BaseModel):
         if not isinstance(loan_amount, (int, float)) or loan_amount <= 0:
             raise ValueError("'loan_amnt' must be a positive number.")
         return self
+
+
+class PredictionResponse(BaseModel):
+    probability_default: float
+    credit_score: int
+    pd_cutoff: float
+    approved: bool
+    expected_loss: float
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "probability_default": 0.18,
+                "credit_score": 658,
+                "pd_cutoff": 0.23,
+                "approved": True,
+                "expected_loss": 810.0,
+            }
+        }
+    }
 
 
 app = FastAPI(title="Credit Risk API", version="1.0.0")
@@ -58,8 +81,8 @@ def health() -> dict:
     return {"status": "ok", "feature_count": len(ALLOWED_FEATURES)}
 
 
-@app.post("/predict")
-def predict(request: PredictionRequest) -> dict:
+@app.post("/predict", response_model=PredictionResponse)
+def predict(request: PredictionRequest) -> PredictionResponse:
     try:
         frame = to_model_frame(request.features)
         probability_default = float(MODEL.predict_proba(frame)[0, 1])
@@ -68,10 +91,10 @@ def predict(request: PredictionRequest) -> dict:
 
     loan_amount = float(frame.loc[0, "loan_amnt"])
     expected_loss = probability_default * 0.45 * loan_amount
-    return {
-        "probability_default": probability_default,
-        "credit_score": int(prob_to_credit_score(pd.Series([probability_default]).to_numpy())[0]),
-        "pd_cutoff": PD_CUTOFF,
-        "approved": probability_default < PD_CUTOFF,
-        "expected_loss": expected_loss,
-    }
+    return PredictionResponse(
+        probability_default=probability_default,
+        credit_score=int(prob_to_credit_score(pd.Series([probability_default]).to_numpy())[0]),
+        pd_cutoff=PD_CUTOFF,
+        approved=probability_default < PD_CUTOFF,
+        expected_loss=expected_loss,
+    )
