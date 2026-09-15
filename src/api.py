@@ -9,6 +9,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
+from src.modeling_pipeline import add_financial_features
 from src.scoring import prob_to_credit_score
 
 
@@ -25,23 +26,79 @@ PREPROCESSOR = MODEL.pipeline.named_steps["preprocessor"]
 NUMERIC_FEATURES = list(PREPROCESSOR.transformers_[0][2])
 CATEGORICAL_FEATURES = list(PREPROCESSOR.transformers_[1][2])
 ALLOWED_FEATURES = set(NUMERIC_FEATURES + CATEGORICAL_FEATURES)
+DERIVED_FEATURES = {
+    "loan_to_income",
+    "revolving_balance_to_income",
+    "revolving_balance_to_limit",
+    "accounts_per_credit_history_year",
+}
+REQUEST_FEATURES = ALLOWED_FEATURES - DERIVED_FEATURES
+REQUIRED_FEATURES = {
+    "loan_amnt",
+    "annual_inc",
+    "dti",
+    "delinq_2yrs",
+    "inq_last_6mths",
+    "revol_bal",
+    "revol_util",
+    "total_acc",
+    "total_rev_hi_lim",
+    "credit_history_months",
+    "term_months",
+    "emp_length_years",
+    "home_ownership",
+    "verification_status",
+    "loan_purpose",
+}
+POSITIVE_FEATURES = {"loan_amnt", "annual_inc", "total_rev_hi_lim", "credit_history_months", "term_months"}
+NON_NEGATIVE_FEATURES = REQUIRED_FEATURES - {
+    "home_ownership", "verification_status", "loan_purpose"
+}
 with open(REPORT_PATH, encoding="ascii") as file:
     PD_CUTOFF = json.load(file)["recommended_cutoff"]["pd_cutoff"]
 
 
 class PredictionRequest(BaseModel):
     features: dict[str, Value] = Field(
-        json_schema_extra={"example": {"loan_amnt": 10000}}
+        json_schema_extra={
+            "example": {
+                "loan_amnt": 10000,
+                "annual_inc": 75000,
+                "dti": 18.5,
+                "delinq_2yrs": 0,
+                "inq_last_6mths": 1,
+                "revol_bal": 12000,
+                "revol_util": 42.0,
+                "total_acc": 18,
+                "total_rev_hi_lim": 30000,
+                "credit_history_months": 144,
+                "term_months": 36,
+                "emp_length_years": 5,
+                "home_ownership": "RENT",
+                "verification_status": "Verified",
+                "loan_purpose": "debt_consolidation",
+            }
+        }
     )
 
     @model_validator(mode="after")
     def check_features(self):
-        unexpected = sorted(set(self.features) - ALLOWED_FEATURES)
+        unexpected = sorted(set(self.features) - REQUEST_FEATURES)
         if unexpected:
-            raise ValueError(f"Unsupported or conditional features: {unexpected}")
-        loan_amount = self.features.get("loan_amnt")
-        if not isinstance(loan_amount, (int, float)) or loan_amount <= 0:
-            raise ValueError("'loan_amnt' must be a positive number.")
+            raise ValueError(f"Unsupported, derived, or conditional features: {unexpected}")
+        missing = sorted(REQUIRED_FEATURES - set(self.features))
+        if missing:
+            raise ValueError(f"Missing required application features: {missing}")
+        for feature in NON_NEGATIVE_FEATURES:
+            value = self.features[feature]
+            if not isinstance(value, (int, float)) or value < 0:
+                raise ValueError(f"'{feature}' must be a non-negative number.")
+        for feature in POSITIVE_FEATURES:
+            if self.features[feature] <= 0:
+                raise ValueError(f"'{feature}' must be a positive number.")
+        for feature in {"home_ownership", "verification_status", "loan_purpose"}:
+            if not isinstance(self.features[feature], str) or not self.features[feature].strip():
+                raise ValueError(f"'{feature}' must be a non-empty string.")
         return self
 
 
@@ -73,7 +130,7 @@ def to_model_frame(features: dict[str, Value]) -> pd.DataFrame:
     frame = pd.DataFrame([row])
     for feature in NUMERIC_FEATURES:
         frame[feature] = pd.to_numeric(frame[feature], errors="coerce")
-    return frame
+    return add_financial_features(frame)
 
 
 @app.get("/health")

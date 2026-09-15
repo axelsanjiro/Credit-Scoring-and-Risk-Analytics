@@ -90,16 +90,16 @@ streamlit run src/dashboard.py
 
 Open Streamlit at [http://localhost:8501](http://localhost:8501). Open FastAPI docs at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-The API exposes `GET /health` and `POST /predict`. Send only fields in the trained feature schema; `loan_amnt` is required and must be positive. Conditional pricing fields such as `int_rate` and `installment` are rejected.
+The API exposes `GET /health` and `POST /predict`. It requires core application, affordability, and credit-history fields; additional supported bureau fields are optional. Derived ratios are calculated by the API. Conditional pricing fields such as `int_rate` and `installment` are rejected.
 
 ### API Prediction Example
 
-Start the API, then send a JSON payload. The minimal valid request contains a positive `loan_amnt`; omitted model features are handled by the training-time preprocessing pipeline.
+Start the API, then send the required application and bureau fields. Additional supported fields are optional and missing optional values are handled by the training-time preprocessing pipeline.
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri http://localhost:8000/predict `
   -ContentType "application/json" `
-  -Body '{"features":{"loan_amnt":10000}}'
+  -Body '{"features":{"loan_amnt":10000,"annual_inc":75000,"dti":18.5,"delinq_2yrs":0,"inq_last_6mths":1,"revol_bal":12000,"revol_util":42.0,"total_acc":18,"total_rev_hi_lim":30000,"credit_history_months":144,"term_months":36,"emp_length_years":5,"home_ownership":"RENT","verification_status":"Verified","loan_purpose":"debt_consolidation"}}'
 ```
 
 The response contains `probability_default`, a FICO-like `credit_score`, the selected `pd_cutoff`, an `approved` decision, and `expected_loss`.
