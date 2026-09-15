@@ -1,12 +1,21 @@
 # Environments
+.venv/
 venv/
 env/
 
-# Python
+# Python caches, test output, and coverage
 __pycache__/
-*.pyc
-*.pkl
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Data
+# Local editor settings
+.vscode/*
+!.vscode/settings.json
+
+# Local data and generated experiment artifacts
 data/raw/*.csv
 data/processed/*.csv
+models/
+catboost_info/

@@ -2,29 +2,27 @@
 
 ## Project Objective
 
-Project ini membangun sistem credit scoring untuk mengestimasi Probability of Default (PD) pada data historis Lending Club. Output PD akan menjadi dasar untuk credit score, Expected Loss, dan rekomendasi approval cutoff.
+This project builds a credit-scoring system to estimate Probability of Default (PD) from historical Lending Club data. PD supports credit scores, Expected Loss, and approval-cutoff recommendations.
 
-Tujuan portofolio proyek adalah menunjukkan workflow data science end-to-end yang memperhatikan data leakage, class imbalance, probability calibration, explainability, dan keputusan bisnis.
+This portfolio demonstrates an end-to-end data-science workflow with leakage control, class imbalance handling, probability calibration, explainability, and business decisions.
 
 ## Current Status
 
-Tahap yang sudah diimplementasikan:
+Implemented stages:
 
-1. Exploratory Data Analysis pada raw data Lending Club.
-2. Data cleaning dan target definition di `src/data_pipeline.py`.
-3. Information Value (IV) screening di `src/feature_engineering.py`.
-4. LightGBM training, isotonic calibration, dan holdout evaluation di `src/train.py`.
+1. Exploratory Data Analysis on raw Lending Club data.
+2. Data cleaning and target definition in `src/data_pipeline.py`.
+3. Leakage-safe temporal splitting and training-only preprocessing in `src/modeling_pipeline.py`.
+4. Deterministic financial-ratio features and missingness indicators.
+5. Temporal Logistic Regression, LightGBM, XGBoost, and CatBoost benchmarks.
+6. Optuna LightGBM tuning, validation-only calibration, and untouched test evaluation.
+7. Expected Loss cutoff analysis, FastAPI endpoint, Streamlit simulator, and unit tests.
 
-Tahap yang belum diimplementasikan:
+Implementation status:
 
-- Out-of-time validation.
-- Optuna hyperparameter tuning.
-- Benchmark XGBoost, CatBoost, dan Logistic Regression + WoE.
-- Financial ratio engineering yang tervalidasi.
-- Business cutoff / Expected Loss optimizer.
-- FastAPI, Streamlit, Docker, SHAP serving, dan automated tests.
+- The planned portfolio pipeline is implemented. Production deployment remains out of scope and requires the controls listed in [Current Limitations](#current-limitations).
 
-Roadmap rinci tersedia di [Model_Improvement_Plan.md](Model_Improvement_Plan.md).
+See [Model_Improvement_Plan.md](Model_Improvement_Plan.md) for full roadmap.
 
 ## Current Pipeline
 
@@ -35,36 +33,28 @@ Raw Lending Club data
 Data cleaning and target mapping
     |
     v
-IV-based feature screening
+Approved deterministic feature engineering
     |
     v
-One-hot encoding and stratified random 80:20 split
+Training-only imputation and encoding after chronological split
     |
     v
-LightGBM + isotonic calibration
+Model benchmarking and calibration
     |
     v
-ROC-AUC, Gini, KS, Brier score, classification report
+ROC-AUC, Gini, KS, PR-AUC, Brier score, and risk deciles
     |
     v
-Serialized model and feature names
+Serialized pipeline, calibrator, feature schema, and decision artifacts
 ```
 
 ## Data And Target Definition
 
-The current ETL reads a restricted set of Lending Club columns that are intended to be available before or at loan origination:
+The current ETL reads audited Lending Club fields intended to be available at application or origination. The complete allowed/conditional/excluded feature contract is maintained in [feature_inventory.md](feature_inventory.md).
 
-- `loan_amnt`
-- `int_rate`
-- `annual_inc`
-- `dti`
-- `fico_range_low`
-- `revol_util`
-- `delinq_2yrs`
-- `inq_last_6mths`
-- `emp_length`
-- `home_ownership`
-- `purpose`
+- Current baseline fields: `loan_amnt`, `int_rate`, `annual_inc`, `dti`, `revol_util`, `delinq_2yrs`, `inq_last_6mths`, `emp_length`, `home_ownership`, and `purpose`
+- Expanded approved candidates: loan terms, verification, credit-history, revolving-credit, account-composition, and aggregate-balance fields
+- `issue_d` for chronological splitting only
 - `loan_status` for target construction only
 
 The target is defined as:
@@ -82,68 +72,42 @@ Implemented in `src/data_pipeline.py`:
 - Reads only whitelisted columns to reduce memory use and avoid known leakage fields.
 - Converts `int_rate` from percentage text into float.
 - Extracts numeric employment duration from `emp_length` into `emp_length_years`.
-- Median-imputes `annual_inc`, `dti`, `revol_util`, and `int_rate`.
-- Fills selected credit-count fields with zero.
-- Renames `fico_range_low` to `fico_score` and `purpose` to `loan_purpose` when those source columns are present.
-- Drops remaining missing rows and exports `data/processed/credit_applications_cleaned.csv`.
+- Parses `term` into `term_months` and `emp_length` into `emp_length_years`.
+- Parses `issue_d` into `issue_date` and derives `credit_history_months` from `earliest_cr_line`.
+- Renames `purpose` to `loan_purpose`.
+- Retains numeric missing values for training-only imputation in the next pipeline stage.
+- Exports `data/processed/credit_applications_cleaned.csv`.
 
-The generated cleaned artifact currently contains 1,303,638 rows, 10 predictor columns, and a default rate of about 20.07%.
+Legacy selected-data and LightGBM artifacts remain available for comparison only.
 
-## Current Feature Screening
+## Temporal Split And Preprocessing
 
-`src/feature_engineering.py` calculates Weight of Evidence (WoE) and Information Value (IV) using quantile bins for continuous variables. Features with IV >= `0.02` are exported to `data/processed/credit_applications_selected.csv`.
+`src/modeling_pipeline.py` creates chronological partitions by application vintage: oldest 65% for training, next 15% for validation, and newest 20% for final testing. It excludes `issue_date` from predictors and excludes conditional pricing fields (`int_rate`, `installment`) from the default experiment.
 
-The current selected artifact retains these seven raw predictors:
+The module fits numeric median imputation, numeric missingness indicators, categorical `Missing` treatment, and one-hot encoding on training rows only. Features fully missing in training are excluded from every partition. The fitted preprocessor is saved to `models/credit_preprocessor.pkl`; split metadata is saved to `models/temporal_split_summary.json`.
 
-- `loan_amnt`
-- `int_rate`
-- `home_ownership`
-- `annual_inc`
-- `dti`
-- `inq_last_6mths`
-- `revol_util`
+`src.experiment` fits candidate models on training data, tunes LightGBM with expanding training folds, selects by validation performance, and fits calibration on validation data only. Test rows remain untouched until final evaluation.
 
-Current IV screening results show that `int_rate` is the strongest individual signal (IV about `0.4468`). Most remaining retained variables have weak IV. This supports the hypothesis that the current performance ceiling is caused mainly by limited feature signal.
+## Final Model And Decision Layer
 
-WoE/IV is useful for diagnostics and an interpretable scorecard baseline. It will not be used as the only hard filter for tree models in the improved pipeline because low univariate IV features can still add predictive value through interactions.
+`src.experiment` writes benchmark metrics, Optuna trials, feature importance, risk deciles, cutoff analysis, and `models/credit_risk_model.pkl`. The artifact contains preprocessing, selected estimator, and calibration.
 
-## Current Model
+The selected model, calibration method, and metrics are written to `models/final_model_report.json` after each experiment run. Calibration methods are selected using a later chronological portion of the validation period, then refit on the complete validation period. The final test period remains untouched until this step.
 
-`src/train.py` performs the following steps:
+Business policy uses LGD `45%`, annual margin `7%`, `$100` operational cost per approval, and a maximum approved default rate of `15%`. The recommended PD cutoff and expected approval rate are recorded in the generated final model report.
 
-1. Loads the selected dataset, or falls back to the cleaned dataset.
-2. One-hot encodes categorical fields using `pandas.get_dummies`.
-3. Creates a stratified random 80:20 train-test split with `random_state=42`.
-4. Calculates `scale_pos_weight` from the training class ratio.
-5. Trains an `LGBMClassifier` with fixed hyperparameters.
-6. Applies isotonic calibration using `CalibratedClassifierCV` with 3 folds.
-7. Evaluates holdout ROC-AUC, Gini, KS statistic, Brier score, and the classification report at a `0.5` threshold.
-8. Saves the calibrated model to `models/credit_lgbm_model.pkl` and model feature names to `models/model_features.pkl`.
-
-## Current Baseline Result
-
-Reconstructed evaluation of the existing model artifact using its deterministic holdout split produced:
-
-| Metric | Result | Reference Target |
-|---|---:|---:|
-| ROC-AUC | 0.7025 | > 0.75 |
-| Gini coefficient | 0.4050 | > 0.50 |
-| KS statistic | 0.2924 | > 0.40 |
-| Brier score | 0.1468 | Lower is better |
-
-The current baseline does not meet the intended discrimination targets. These values should be treated as a baseline, not as a production-ready credit model.
+Global SHAP review identifies `term_months`, `acc_open_past_24mths`, and `loan_to_income` as top drivers. Run API with `uvicorn src.api:app --reload`. Run simulator with `streamlit run src/dashboard.py`. Build container with `docker build -t credit-risk-api .`.
 
 ## Current Limitations
 
-- The dataset is randomly split rather than split by application vintage; future stability is not yet tested.
-- Imputation, IV calculation, and one-hot encoding occur before the split. This creates methodological leakage because test-distribution information influences preprocessing and selection.
-- The model uses fixed LightGBM parameters. Optuna tuning and model comparison are not implemented yet.
-- Metrics are printed to the console but are not persisted as experiment artifacts.
-- The preprocessing steps are not serialized with the model. An API cannot yet safely transform raw applicant input into the exact model schema.
-- The documentation and generated processed artifact need a data audit to resolve the current absence of `fico_score` from the artifact.
+- Final test performance declines from validation performance, indicating temporal drift.
+- `term_months` has unusually high XGBoost importance. Keep monitoring decision-point availability and policy dependence.
+- Model calibration and business results depend on historical Lending Club outcomes and stated financial assumptions.
+- API accepts approved feature names only, but production deployment still needs authentication, audit logging, data contracts, and policy review.
+- The supplied raw dataset does not contain FICO-range fields. This limitation is documented in `feature_inventory.md`; alternative credit-profile features will be evaluated instead.
 - A `0.5` classification threshold is shown only for diagnostics; it is not a financially optimized loan approval policy.
 
-## Planned Improved Pipeline
+## Pipeline Design
 
 ```text
 Raw Lending Club data + data dictionary audit
@@ -158,7 +122,7 @@ Out-of-time train / validation / test split
 Training-only preprocessing and feature engineering pipeline
     |
     v
-Logistic Regression + WoE, LightGBM, XGBoost, CatBoost benchmarks
+Logistic Regression, LightGBM, XGBoost, CatBoost benchmarks
     |
     v
 Optuna tuning and validation-period calibration comparison
@@ -199,21 +163,28 @@ where PD is the calibrated predicted probability of default, LGD is Loss Given D
 
 ```text
 data/
-  raw/loan.csv
-  processed/credit_applications_cleaned.csv
-  processed/credit_applications_selected.csv
+  raw/loan.csv                         # Local, not committed
+  processed/credit_applications_cleaned.csv # Generated, not committed
 docs/
   Documentation.md
   Model_Improvement_Plan.md
+  Model_Card.md
+  feature_inventory.md
 models/
-  credit_lgbm_model.pkl
-  model_features.pkl
+  credit_risk_model.pkl                # Generated, not committed
+  final_model_report.json              # Generated, not committed
 notebooks/
   eda_analysis.ipynb
 src/
   data_pipeline.py
-  feature_engineering.py
-  train.py
+  modeling_pipeline.py
+    experiment.py
+    api.py
+    dashboard.py
+    scoring.py
+tests/
+  test_api.py
+  test_modeling_pipeline.py
 ```
 
 ## Disclaimer

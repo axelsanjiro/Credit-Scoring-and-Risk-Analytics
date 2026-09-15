@@ -6,63 +6,71 @@ def clean_lending_club_data(raw_data_path: str, processed_data_path: str):
     print(f"Loading raw data from {raw_data_path}...")
     
     try:
-        # 1. Memory Optimization: Hanya memuat 12 kolom Pre-Origination yang aman dari Data Leakage
-        # dan memiliki Missing Value di bawah 50% berdasarkan hasil EDA.
+        # 1. Load audited application-time and credit-bureau fields only.
+        # issue_d is retained for the future chronological split, not as a model predictor.
         columns_to_keep = [
-            'loan_amnt', 'int_rate', 'annual_inc', 'dti', 'fico_range_low', 
-            'revol_util', 'delinq_2yrs', 'inq_last_6mths', 'emp_length', 
-            'home_ownership', 'purpose', 'loan_status'
+            'loan_amnt', 'term', 'int_rate', 'installment', 'emp_length',
+            'home_ownership', 'annual_inc', 'verification_status', 'issue_d',
+            'loan_status', 'purpose', 'dti', 'delinq_2yrs', 'earliest_cr_line',
+            'inq_last_6mths', 'open_acc', 'pub_rec', 'revol_bal', 'revol_util',
+            'total_acc', 'tot_cur_bal', 'open_rv_12m', 'open_rv_24m',
+            'total_rev_hi_lim', 'acc_open_past_24mths', 'avg_cur_bal',
+            'bc_open_to_buy', 'bc_util', 'chargeoff_within_12_mths', 'mort_acc',
+            'mths_since_recent_inq', 'num_accts_ever_120_pd', 'num_actv_bc_tl',
+            'num_actv_rev_tl', 'num_bc_sats', 'num_bc_tl', 'num_il_tl',
+            'num_op_rev_tl', 'num_rev_accts', 'num_rev_tl_bal_gt_0', 'num_sats',
+            'num_tl_90g_dpd_24m', 'num_tl_op_past_12m', 'pct_tl_nvr_dlq',
+            'percent_bc_gt_75', 'pub_rec_bankruptcies', 'tax_liens',
+            'tot_hi_cred_lim', 'total_bal_ex_mort', 'total_bc_limit',
+            'total_il_high_credit_limit'
         ]
-        df = pd.read_csv(raw_data_path, usecols=lambda c: c in columns_to_keep, low_memory=False)
+        df = pd.read_csv(raw_data_path, usecols=columns_to_keep, low_memory=False)
     except FileNotFoundError:
-        print(f"ERROR: File tidak ditemukan di {raw_data_path}.")
+        print(f"ERROR: File not found: {raw_data_path}.")
         return
 
-    print("Data berhasil dimuat. Memulai proses Data Cleaning & Wrangling...")
+    print("Data loaded. Starting cleaning and wrangling...")
     
-    # 2. TARGET DEFINITION: Buang pinjaman 'Current' (masih berjalan)
+    # 2. TARGET DEFINITION: Exclude active loans with unknown final outcomes.
     valid_statuses = ['Fully Paid', 'Charged Off', 'Default']
     df = df[df['loan_status'].isin(valid_statuses)].copy()
     
-    # Mapping Target: 1 = Gagal Bayar (Bad Loan), 0 = Lancar (Good Loan)
+    # Target mapping: 1 = bad loan, 0 = good loan.
     df['default'] = np.where(df['loan_status'] == 'Fully Paid', 0, 1)
     df = df.drop(columns=['loan_status'])
     
-    # 3. TEXT TO NUMERIC (REGEX & STRING PARSING)
-    # A. Membersihkan 'int_rate' (Suku Bunga) dari format ' 10.65%' menjadi float 10.65
-    if df['int_rate'].dtype == 'O':
-        df['int_rate'] = df['int_rate'].astype(str).str.replace('%', '').str.strip().astype(float)
-        
-    # B. Ekstraksi angka dari 'emp_length' (contoh: "10+ years" menjadi 10.0)
-    df['emp_length_years'] = df['emp_length'].astype(str).str.extract(r'(\d+)').astype(float)
-    df['emp_length_years'] = df['emp_length_years'].fillna(0) # Asumsi 0 jika kosong
-    df = df.drop(columns=['emp_length'])
+    # 3. Normalize application fields without learning statistics from the full dataset.
+    df['int_rate'] = pd.to_numeric(
+        df['int_rate'].astype(str).str.replace('%', '', regex=False).str.strip(),
+        errors='coerce'
+    )
+    df['term_months'] = pd.to_numeric(
+        df['term'].astype(str).str.extract(r'(\d+)')[0], errors='coerce'
+    )
+    df['emp_length_years'] = pd.to_numeric(
+        df['emp_length'].astype(str).str.extract(r'(\d+)')[0], errors='coerce'
+    )
+
+    issue_date = pd.to_datetime(df['issue_d'], format='%b-%Y', errors='coerce')
+    earliest_credit_date = pd.to_datetime(df['earliest_cr_line'], format='%b-%Y', errors='coerce')
+    df['issue_date'] = issue_date
+    df['credit_history_months'] = (
+        (issue_date.dt.year - earliest_credit_date.dt.year) * 12
+        + issue_date.dt.month - earliest_credit_date.dt.month
+    )
+
+    # Missing numeric values are retained for training-only imputation in the next stage.
+    df = df.drop(columns=['term', 'emp_length', 'issue_d', 'earliest_cr_line'])
+    df = df.rename(columns={'purpose': 'loan_purpose'})
     
-    # 4. MISSING VALUE IMPUTATION
-    # Menggunakan median agar tahan terhadap outlier (seperti income yang sangat tinggi)
-    df['annual_inc'] = df['annual_inc'].fillna(df['annual_inc'].median())
-    df['dti'] = df['dti'].fillna(df['dti'].median())
-    df['revol_util'] = df['revol_util'].fillna(df['revol_util'].median())
-    df['int_rate'] = df['int_rate'].fillna(df['int_rate'].median())
-    
-    # Untuk fitur diskrit/hitungan, isi dengan 0
-    df['delinq_2yrs'] = df['delinq_2yrs'].fillna(0)
-    df['inq_last_6mths'] = df['inq_last_6mths'].fillna(0)
-    
-    # 5. STANDARDIZASI NAMA KOLOM
-    df = df.rename(columns={'fico_range_low': 'fico_score', 'purpose': 'loan_purpose'})
-    
-    # 6. SAFETY DROP: Buang sisa baris yang masih mengandung NaN di kolom kategorikal
-    df = df.dropna()
-    
-    # 7. EXPORT DATA BERSIH
+    # 4. EXPORT CLEANED, BUT NOT YET IMPUTED, DATA
     os.makedirs(os.path.dirname(processed_data_path), exist_ok=True)
     df.to_csv(processed_data_path, index=False)
     
-    print(f"\n--- PROSES SELESAI ---")
-    print(f"Dataset diproses dan disimpan ke: {processed_data_path}")
-    print(f"Total baris valid: {len(df):,}")
-    print(f"Default rate (Gagal Bayar): {df['default'].mean():.2%}")
+    print("\n--- PROCESS COMPLETE ---")
+    print(f"Processed dataset saved to: {processed_data_path}")
+    print(f"Total valid rows: {len(df):,}")
+    print(f"Default rate: {df['default'].mean():.2%}")
 
 if __name__ == "__main__":
     RAW_PATH = "data/raw/loan.csv"

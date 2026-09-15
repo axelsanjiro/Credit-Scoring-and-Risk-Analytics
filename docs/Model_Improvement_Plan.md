@@ -2,7 +2,7 @@
 
 ## Objective
 
-Meningkatkan model Probability of Default (PD) secara valid dan dapat dijelaskan. Fokus utama bukan mengganti LightGBM dengan deep learning, tetapi memperkaya sinyal fitur pre-origination, mencegah data leakage, dan mengevaluasi model seperti sistem credit risk di dunia nyata.
+Improve Probability of Default (PD) model with valid, explainable methods. Prioritize stronger pre-origination signals, leakage prevention, and real-world credit-risk evaluation over deep learning.
 
 ## Current Baseline
 
@@ -38,14 +38,14 @@ Create an explicit, auditable feature inventory before changing the model.
    - Identifier or high-cardinality field requiring special treatment.
    - Unavailable or unclear-at-application feature.
 2. Create `docs/feature_inventory.md` with column name, business definition, availability timing, leakage decision, and rationale.
-3. Verify why `fico_range_low` / `fico_score` is absent from the current processed artifact despite being listed in `data_pipeline.py` and documentation.
-4. Align `Documentation.md`, pipeline code, and generated artifacts so they describe the same model input.
+3. Confirm whether any documented feature is unavailable in the supplied raw dataset before adding it to ETL.
+4. Keep `Documentation.md`, pipeline code, and generated artifacts aligned to the same model input.
 
 ### Candidate Safe Features
 
 Validate against the data dictionary before use:
 
-- Credit profile: `fico_range_low`, `fico_range_high`, `open_acc`, `total_acc`, `mort_acc`, `pub_rec`, `pub_rec_bankruptcies`, `delinq_2yrs`, `inq_last_6mths`.
+- Credit profile: `open_acc`, `total_acc`, `mort_acc`, `pub_rec`, `pub_rec_bankruptcies`, `delinq_2yrs`, `inq_last_6mths`.
 - Loan application: `loan_amnt`, `term`, `purpose`, `home_ownership`, `verification_status`, `application_type`, `initial_list_status`.
 - Affordability: `annual_inc`, `dti`, `installment`, `revol_bal`, `revol_util`.
 - Lending Club risk/pricing fields: `grade`, `sub_grade`, `int_rate`.
@@ -227,7 +227,7 @@ Expected Loss = PD x LGD x EAD
 
 ## Suggested Implementation Order
 
-1. Audit data dictionary and resolve `fico_score` artifact mismatch.
+1. Audit data dictionary and confirm the raw-data feature contract.
 2. Add approved pre-origination features to ETL and regenerate processed data.
 3. Implement out-of-time split and leakage-safe preprocessing pipeline.
 4. Build Logistic Regression + WoE and LightGBM baselines.
