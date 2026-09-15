@@ -1,5 +1,3 @@
-"""Temporal model benchmarking, calibration, and approval-cutoff analysis."""
-
 import json
 import os
 import time
